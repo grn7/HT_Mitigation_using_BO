@@ -45,6 +45,7 @@ class EHWP_Grid:
 
         plt.title(f"EHWP of size {self.n}x{self.n} infected with {self.num_ht} HTs", fontsize = 20, pad = 25) 
         # increase font size and move its position slightly above
-        plt.show()
+        plt.show(block = False) # makes it non blocking and goes back to running script
+        plt.pause(0.1) # gives matplotlib time to draw graph by not transferring control immediately to the main script
 
     
