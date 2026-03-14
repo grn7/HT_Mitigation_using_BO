@@ -5,26 +5,30 @@ from scipy.stats import qmc # scipy.stats contains collection of statistical too
 # It generates quasi-random numbers, which 
 # are designed to spread out and fill a space very evenly
 from botorch.models import SingleTaskGP # for gaussian process
-from botorch.models.transforms.outcome import Standardize # for translating raw data into a better form can GP can process better
+from botorch.models.transforms.outcome import Standardize # for translating raw data into a better form GP can process better
+from botorch.models.transforms.input import Normalize # Normalizer to scale grid coordinates to a unit cube (0 to 1)
+
 from gpytorch.mlls import ExactMarginalLogLikelihood # this is the loss function / scorekeeper
 # it calculates how well the GP's current predictions match the real dataset train_X and train_Y
 # higher the score more accurate the model is
 from botorch.fit import fit_gpytorch_mll
 # instead of manually training your model step by step, u give it gp model and scorekeeper
 # it automatically runs it until the model fits your data well
-from botorch.acquisition import ExpectedImprovement # the acquisition function
+
+from botorch.acquisition import LogExpectedImprovement # Replaced ExpectedImprovement with LogExpectedImprovement to fix math crashes
 from botorch.optim import optimize_acqf # respects the bounds and pinpoints coords of path to try next
 
 
 class BO:
-    def __init__(self, n, grid, objective_fn):
+    def __init__(self, n, k, grid, objective_fn):
         self.n = n
+        self.k = k 
         self. grid = grid
         self.objective_fn = objective_fn
     
     def intialise_search_space(self, n_init):
-        # each path has n waypoints, so dim of array is 2n
-        dimension = 2 * self.n
+        # each path has k waypoints, so dim of array is 2*k
+        dimension = 2 * self.k 
 
         #initialise the sampler
         sampler = qmc.LatinHypercube(d = dimension)
@@ -57,13 +61,12 @@ class BO:
             continuous_path = scaled_sample[i]
             rounded_path = int_paths[i]
 
-            cost = self.objective_fn(rounded_path, self.grid, self.n)
+            cost = self.objective_fn(rounded_path, self.grid, self.k, self.n) 
             train_X_list.append(continuous_path) 
 
             # why append floats in the GP data not ints?
             # We store the continuous 'scaled_sample' (floats) in train_X rather than 'int_paths'.
-            # 1. Gradient Informati
-            # on: GPs need continuous values to calculate the 'slope' 
+            # 1. Gradient Information: GPs need continuous values to calculate the 'slope' 
             #    of the cost surface and predict where the next best point lies.
             # 2. Preventing Aliasing: Using only integers creates 'staircase' data where 
             #    multiple different inputs map to the same point, causing numerical 
@@ -74,16 +77,16 @@ class BO:
             train_Y_list.append(cost)
 
         # convert to pytorch tensors for BO loop 
-        train_X = torch.tensor(np.array(train_X_list), dtype = torch.float32) # converts to tensor and required data type
-        train_Y = torch.tensor(train_Y_list, dtype = torch.float32).unsqueeze(-1) 
+        train_X = torch.tensor(np.array(train_X_list), dtype = torch.float64) 
+        train_Y = torch.tensor(train_Y_list, dtype = torch.float64).unsqueeze(-1) 
         # converts row  vector to column vector as the BO libraries require this
 
         return train_X, train_Y
     
     def get_optimizer_bounds(self):
-        dimensions = 2*self.n
-        low_bounds = torch.zeros(dimensions, dtype = torch.float32)
-        upper_bounds = torch.full((dimensions,), self.n -1, dtype = torch.float32)
+        dimensions = 2 * self.k 
+        low_bounds = torch.zeros(dimensions, dtype = torch.float64) 
+        upper_bounds = torch.full((dimensions,), self.n -1, dtype = torch.float64) 
 
         bounds = torch.stack([low_bounds, upper_bounds]) # creates a 2D matrix 
         # this is what botorch needs , row 0 is mins, 1 is maxs
@@ -93,8 +96,17 @@ class BO:
         # negate the costs as BoTorch's acquisiton functions are meant to find max val
         neg_train_Y = -train_Y
 
+        # Get the absolute grid boundaries
+        bounds = self.get_optimizer_bounds()
+
         # use the GP
-        model = SingleTaskGP(train_X, neg_train_Y, outcome_transform=Standardize(m=1))
+        # CHANGED: Added input_transform=Normalize with bounds to fix the Unit Cube scaling crash
+        model = SingleTaskGP(
+            train_X, 
+            neg_train_Y, 
+            outcome_transform=Standardize(m=1),
+            input_transform=Normalize(d=train_X.shape[-1], bounds=bounds)
+        )
         # our objective function outputs very large nos due the penalty, which can the cause model's internal "lengthscales" to become unstable,
         # making it hard to find good fit. so we scale costs to have mean of 0, var of 1 using standardise which keeps the math stable
         # lengthscale tells the ath how smooth or jagged it should assume the relation bw paths and costs will be
@@ -114,12 +126,12 @@ class BO:
         best_f = neg_train_Y.max()
 
         # initialise acq fn
-        EI = ExpectedImprovement(model=model, best_f=best_f)
+        EI = LogExpectedImprovement(model=model, best_f=best_f) 
         # model is our trained GP
 
         # optimise 
         new_path, _ = optimize_acqf(acq_function=EI, bounds=bounds, q=1, num_restarts=5, raw_samples=20)
-        # bounds tells it search within valid grid limits
+        # bounds tells it search within valid limits
         # q =1 gives a single best path to try next 
         # EI creates a map of our problems, which contains hills(good paths) and valleys(bad paths)
         # raw samples = 20, the algo picks 20 random points into the EI function and look at the score
@@ -156,35 +168,27 @@ class BO:
 
             # evaluate 
             rounded_path_np = np.round(continuous_new_path).astype(int)
-            cost = self.objective_fn(rounded_path_np, self.grid, self.n)
+            cost = self.objective_fn(rounded_path_np, self.grid, self.k, self.n) 
 
             # update memory
-            continuous_tensor = torch.tensor(continuous_new_path, dtype=torch.float32).unsqueeze(0)
+            continuous_tensor = torch.tensor(continuous_new_path, dtype=torch.float64).unsqueeze(0) 
             # unsqueeze(0) wraps path in an extra bracket so that pytorch recognises it as a standalone row and can add it to the  2D matrix
             train_X = torch.cat([train_X, continuous_tensor])
 
-            cost_tensor = torch.tensor([cost], dtype=torch.float32).unsqueeze(-1)
+            cost_tensor = torch.tensor([cost], dtype=torch.float64).unsqueeze(-1) 
             # turns a single number [15.5] into a proper 2D column entry [[15.5]]
             train_Y = torch.cat([train_Y, cost_tensor])
 
             # show progress
             best_cost = train_Y.min().item()
-            print(f"Iteration {i+1}/{n_iter}- Best cost so far: {best_cost}")
+            
+            # Print the moving average
+            window_size = 5
+            if len(train_Y) >= window_size:
+                # Grab the last 5 costs using negative indexing and calculate the mean
+                moving_avg = train_Y[-window_size:].mean().item()
+                print(f"Iteration {i+1}/{n_iter} - Current: {cost:.1f} | 5-Iter Avg: {moving_avg:.1f} | Best: {best_cost:.1f}")
+            else:
+                print(f"Iteration {i+1}/{n_iter} - Current: {cost:.1f} | Best: {best_cost:.1f}")
 
         return train_X, train_Y
-
-
-
-    
-
-
-
-
-
-    
-
-
-
-
-
-

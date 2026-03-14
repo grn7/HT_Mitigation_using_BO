@@ -22,7 +22,7 @@ class EHWP_Grid:
         return matrix
     
     def display_grid(self):
-        fig, ax = plt.subplots(figsize=(8,8)) #fig is the blank canvas
+        fig, ax = plt.subplots(figsize=(10,10)) #fig is the blank canvas
         # this is the square area where the grid is drawn
 
         cmap = ListedColorMap(['green', 'red'])
