@@ -68,6 +68,15 @@ class GA:
             self.population[worst_idx] = child
             current_costs[worst_idx] = child_cost
 
+            # print progess tracking 
+            current_best = np.min(current_costs)
+            window_size = 5
+            if len(self.all_sampled_costs) >= window_size:
+                moving_avg = np.mean(self.all_sampled_costs[-window_size:])
+                print(f"Iteration {_ + 1}/{n_iter} - Current: {child_cost:.1f} | 5-Iter Avg: {moving_avg:.1f} | Best: {current_best:.1f}")
+            else:
+                print(f"Iteration {_ + 1}/{n_iter} - Current: {child_cost:.1f} | Best: {current_best:.1f}") 
+
         # find overall winner in final population to plot 
         final_best_idx = np.argmin(current_costs)
         best_path = self.population[final_best_idx]
