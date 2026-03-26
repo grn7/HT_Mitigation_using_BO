@@ -1,15 +1,19 @@
-# main.py - Extended version with GA, BO, and SA 
+# main.py - Extended version with GA, BO, SA, and RL
 # Instantiate objects, call functions and put the whole thing together
 
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
 import re  # To parse the function string for operators
+import time # added for benchmarking RL inference time
+
 from init import EHWP_Grid
 from function import objective_function
 from BO import BO
 from GA import GA
 from SA import SA  
+from train import train_master_agent
+from environment import EHWPEnv
 
 
 def get_manhattan_path(start, end):
@@ -164,7 +168,12 @@ if __name__ == "__main__":
     print("="*50)
     
     bo_optimizer = BO(n, k, EHWP.grid, objective_function)
+    
+    # --- ADDED: Timer for BO ---
+    bo_start_time = time.time()
     train_X, train_Y = bo_optimizer.run_optimization(n_iter=n_iter, n_init=10)
+    bo_end_time = time.time()
+    bo_time = bo_end_time - bo_start_time
     
     # Extract best BO result
     best_idx = torch.argmin(train_Y).item()
@@ -174,6 +183,7 @@ if __name__ == "__main__":
     
     print(f"\nBO Best cost: {bo_best_cost}")
     print(f"BO Best path: {bo_best_path}")
+    print(f"BO Search Time: {bo_time:.3f} seconds")
     
     # ============ GENETIC ALGORITHM ============
     print("\n" + "="*50)
@@ -182,10 +192,16 @@ if __name__ == "__main__":
     
     ga_optimizer = GA(n, k, EHWP.grid, objective_function, 
                       pop_size=10, mutation_rate=mutation_rate)
+    
+    # --- ADDED: Timer for GA ---
+    ga_start_time = time.time()
     ga_all_costs, ga_best_path, ga_best_cost = ga_optimizer.run_optimization(n_iter=n_iter)
+    ga_end_time = time.time()
+    ga_time = ga_end_time - ga_start_time
     
     print(f"\nGA Best cost: {ga_best_cost}")
     print(f"GA Best path: {ga_best_path}")
+    print(f"GA Search Time: {ga_time:.3f} seconds")
     
     # ============ SIMULATED ANNEALING ============
     print("\n" + "="*50)
@@ -195,13 +211,70 @@ if __name__ == "__main__":
     # SA parameters - tuned for exactly n_init + n_iter evaluations
     sa_optimizer = SA(n, k, EHWP.grid, objective_function,
                       initial_temp=100.0, min_temp=0.1)
+    
+    # --- ADDED: Timer for SA ---
+    sa_start_time = time.time()
     sa_all_costs, sa_best_path, sa_best_cost = sa_optimizer.run_optimization(
         n_iter=n_iter, n_init=10
     )
+    sa_end_time = time.time()
+    sa_time = sa_end_time - sa_start_time
     
     print(f"\nSA Best cost: {sa_best_cost}")
     print(f"SA Best path: {sa_best_path}")
-    
+    print(f"SA Search Time: {sa_time:.3f} seconds")
+
+    # RL
+    print("\n" + "="*50)
+    print("REINFORCEMENT LEARNING (INFERENCE)")
+    print("="*50)
+
+    # 1. Load the trained master agent 
+    rl_agent = train_master_agent(n, i)
+
+    # 2. setup the environment with exact same grid and k used for BO,GA and SA
+    rl_env = EHWPEnv(n, k, EHWP.grid)
+    state = rl_env.reset(EHWP.grid)
+    valid_mask = rl_env.get_valid_action()
+
+    rl_path_coords = []
+
+    # 3. Route the wires using pure exploitation (Epsilon = 0)
+    original_epsilon = rl_agent.epsilon
+    rl_agent.epsilon = 0.0
+
+    # start inference timer
+    inference_start_time = time.time()
+
+    for _ in range(k):
+        action = rl_agent.act(state, valid_mask)
+
+        # decode action to row,col and save
+        row, col = rl_env.decode_action(action)
+        rl_path_coords.extend([row, col])
+
+        # step the environment forward
+        state, _, done, _ = rl_env.step(action)
+        valid_mask = rl_env.get_valid_action()
+
+        if done: 
+            break
+
+    # stop inference timer
+    inference_end_time = time.time()
+    rl_inference_time = inference_end_time - inference_start_time
+
+    # restore original epsilon just in case
+    rl_agent.epsilon = original_epsilon
+
+    # convert to numpy array and score it
+    rl_best_path = np.array(rl_path_coords)
+    rl_best_cost = objective_function(rl_best_path, EHWP.grid, k, n)
+
+    print(f"\nRL Best Cost: {rl_best_cost}")
+    print(f"RL Best Path: {rl_best_path}")
+    print(f"RL Inference Time: {rl_inference_time:.5f} seconds")
+
     # ============ VERIFY EVALUATION COUNTS ============
     print("\n" + "="*50)
     print("VERIFYING EVALUATION COUNTS")
@@ -225,7 +298,7 @@ if __name__ == "__main__":
     print("GENERATING VISUALIZATIONS")
     print("="*50)
     
-    # 1. Convergence comparison plot (all three algorithms)
+    # 1. Convergence comparison plot (all algorithms)
     bo_costs_np, ga_costs_np, sa_costs_np = plot_convergence_comparison(
         train_Y, ga_all_costs, sa_all_costs, window_size=5
     )
@@ -244,26 +317,36 @@ if __name__ == "__main__":
         marker_color='red', window_title="GA Optimization Result"
     )
     
-    # 4. SA Grid Plot (NEW)
+    # 4. SA Grid Plot
     plot_grid_with_path(
         EHWP, sa_best_path, k, 
         title="SA", color='yellow', linestyle=':', 
         marker_color='yellow', window_title="SA Optimization Result"
+    )
+
+    # 5. RL Grid plot
+    plot_grid_with_path(
+        EHWP, rl_best_path, k,
+        title="RL", color='magenta', linestyle='-.',
+        marker_color='magenta', window_title="RL Optimization Result"
     )
     
     # Print summary statistics
     print("\n" + "="*50)
     print("FINAL RESULTS SUMMARY")
     print("="*50)
-    print(f"{'Algorithm':<10} {'Best Cost':<15} {'Evaluations':<15}")
-    print(f"{'-'*40}")
-    print(f"{'BO':<10} {bo_best_cost:<15.2f} {bo_count:<15}")
-    print(f"{'GA':<10} {ga_best_cost:<15.2f} {ga_count:<15}")
-    print(f"{'SA':<10} {sa_best_cost:<15.2f} {sa_count:<15}")
+    
+    # --- CHANGED: Updated table headers and rows to accommodate the timed metrics cleanly ---
+    print(f"{'Algorithm':<10} {'Best Cost':<15} {'Evaluations/Time':<30}")
+    print(f"{'-'*55}")
+    print(f"{'BO':<10} {bo_best_cost:<15.2f} {f'{bo_count} evals / {bo_time:.3f}s':<30}")
+    print(f"{'GA':<10} {ga_best_cost:<15.2f} {f'{ga_count} evals / {ga_time:.3f}s':<30}")
+    print(f"{'SA':<10} {sa_best_cost:<15.2f} {f'{sa_count} evals / {sa_time:.3f}s':<30}")
+    print(f"{'RL':<10} {rl_best_cost:<15.2f} {f'{rl_inference_time:.5f}s (Inference)':<30}")
     
     # Determine winner
-    costs = [bo_best_cost, ga_best_cost, sa_best_cost]
-    algorithms = ['BO', 'GA', 'SA']
+    costs = [bo_best_cost, ga_best_cost, sa_best_cost, rl_best_cost]
+    algorithms = ['BO', 'GA', 'SA', 'RL']
     winner_idx = np.argmin(costs)
     print(f"\n🏆 Best performing algorithm: {algorithms[winner_idx]} with cost {costs[winner_idx]:.2f}")
     
