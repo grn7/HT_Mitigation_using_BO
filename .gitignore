@@ -3,3 +3,13 @@ __pycache__/
 .vscode
 experiment_results*
 dqn_*
+*.png
+*.jpg
+figures/
+analyze_results.py
+fig3.py
+joint_plot.py
+regen_plots.py
+training_time_log.txt
+update_tie_plots.py
+

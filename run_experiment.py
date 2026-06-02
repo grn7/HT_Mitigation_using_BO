@@ -23,26 +23,30 @@ def run_large_scale_experiment():
     # ==========================================
     n = 16
     infected_rpus = 10
-    k_values = range(20, 201, 10) # k from 20 to 200 in steps of 10
+    
+    # --- CHANGE MADE HERE: Updated step size to 10 to get 19 k values ---
+    k_values = range(20, 201, 10) 
+    # --------------------------------------------------------------------
+    
     runs_per_k = 20
     
     # Algorithm Hyperparameters
-    # --- CHANGE MADE HERE: Reduced iterations from 500 to 100 ---
     n_iter = 1000
-    mutation_rate = 0.4
+    mutation_rate = 0.01
     
     # Directory Management
-    # --- CHANGE MADE HERE: Renamed folder to prevent overwriting previous 500-iter data ---
-    out_dir = "experiment_results_1000_iters"
+    mut_str = str(mutation_rate).replace('.', 'p')
+    out_dir = f"experiment_results_{n}x{n}_{infected_rpus}HTs_k{k_values[0]}-{k_values[-1]}_{runs_per_k}runs_{n_iter}iters_mut{mut_str}"
     os.makedirs(out_dir, exist_ok=True)
-    csv_filename = os.path.join(out_dir, "experiment_data_16x16.csv")
+    csv_filename = os.path.join(out_dir, f"experiment_data_{n}x{n}.csv")
     
     experiment_data = []
 
-    print("="*70)
+    print("="*80)
     print(f"INITIALIZING LARGE SCALE EXPERIMENT")
-    print(f"Grid: {n}x{n} | HTs: {infected_rpus} | k: 20 -> 200 | Runs/k: {runs_per_k} | Iters: {n_iter}")
-    print("="*70)
+    print(f"Grid: {n}x{n} | HTs: {infected_rpus} | k: {k_values[0]} -> {k_values[-1]} | Runs/k: {runs_per_k} | Iters: {n_iter} | Mut: {mutation_rate}")
+    print(f"Output Directory: {out_dir}")
+    print("="*80)
 
     # Load the RL Master Agent ONCE before the loops start
     print("\nLoading Pre-Trained RL Master Agent...")
@@ -50,7 +54,7 @@ def run_large_scale_experiment():
     rl_agent.online_net.eval() # Set to evaluation mode
     original_epsilon = rl_agent.epsilon
     
-    print(f"\nStarting 380-Run Execution Loop. Results will stream below:\n")
+    print(f"\nStarting Run Execution Loop. Results will stream below:\n")
 
     # ==========================================
     # 2. THE EXECUTION LOOP
@@ -77,7 +81,7 @@ def run_large_scale_experiment():
                 t0 = time.time()
                 _, _, sa_cost = sa_optimizer.run_optimization(n_iter=n_iter, n_init=10)
                 sa_time = max(time.time() - t0, 1e-6)
-                
+
                 # D. Run Reinforcement Learning (RL) Inference
                 # SAFEST APPROACH: Fresh environment per run guarantees no state contamination
                 rl_env = EHWPEnv(n, k, fresh_grid)
@@ -119,7 +123,7 @@ def run_large_scale_experiment():
                 winner = min(costs, key=costs.get)
                 
                 # F. Terminal Output 
-                print(f"[k={k:<3} | Run {run:02d}/20] "
+                print(f"[k={k:<4} | Run {run:02d}/20] "
                       f"GA: {ga_cost:<7.1f} | SA: {sa_cost:<7.1f} | RL: {rl_status_str} "
                       f"--> 🏆 {winner} Wins!")
                 
@@ -142,10 +146,10 @@ def run_large_scale_experiment():
     # Restore RL agent state
     rl_agent.epsilon = original_epsilon
 
-    print("\n" + "="*70)
+    print("\n" + "="*80)
     print(f"EXPERIMENT COMPLETE. Data saved to {csv_filename}")
     print("Generating Visualizations...")
-    print("="*70)
+    print("="*80)
 
     # ==========================================
     # 3. DATA PROCESSING & VISUALIZATIONS
@@ -198,7 +202,7 @@ def run_large_scale_experiment():
     # ---- PLOT 2: Average Cost vs k ----
     plt.figure(figsize=(10, 6))
     plt.plot(k_list, avg_costs['GA'], marker='o', color='red', linewidth=2, label='GA')
-    plt.plot(k_list, avg_costs['SA'], marker='s', color='yellow', linewidth=2, label='SA')
+    plt.plot(k_list, avg_costs['SA'], marker='s', color='green', linewidth=2, label='SA')
     plt.plot(k_list, avg_costs['RL'], marker='^', color='magenta', linewidth=2, label='RL (Successful Runs Only)')
     
     plt.title('Average Path Cost vs. Number of Operators ($k$)', fontsize=14, fontweight='bold')
@@ -213,7 +217,7 @@ def run_large_scale_experiment():
     # ---- PLOT 3: Average Inference Time vs k ----
     plt.figure(figsize=(10, 6))
     plt.plot(k_list, avg_times['GA'], marker='o', color='red', linewidth=2, label='GA')
-    plt.plot(k_list, avg_times['SA'], marker='s', color='yellow', linewidth=2, label='SA')
+    plt.plot(k_list, avg_times['SA'], marker='s', color='green', linewidth=2, label='SA')
     plt.plot(k_list, avg_times['RL'], marker='^', color='magenta', linewidth=2, label='RL (Inference)')
     
     plt.title('Average Execution Time vs. Number of Operators ($k$)', fontsize=14, fontweight='bold')

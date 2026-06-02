@@ -2,6 +2,7 @@ import os
 import numpy as np
 import torch
 import random
+import time 
 from collections import deque
 import matplotlib.pyplot as plt
 from init import EHWP_Grid
@@ -9,9 +10,11 @@ from environment import EHWPEnv
 from agent import DoubleDQNAgent, ReplayBuffer
 
 def train_master_agent(n, infected_rpus):
+    # --- CHANGE MADE HERE: Updated k bounds for 64x64 grid ---
     k_min = 20
     k_max = 200
-    max_episodes = 100000
+    # ---------------------------------------------------------
+    max_episodes = 10000
     batch_size = 64
 
     # naming weights based on parameters
@@ -39,9 +42,11 @@ def train_master_agent(n, infected_rpus):
 
     # convergence monitoring setup
     recent_rewards = deque(maxlen=100)
-    best_100_avg = -float('inf')
-    episodes_without_improvement = 0
-    convergence_patience = 500 # stop if no improvement for 500 episodes
+    
+    # Commented out early stopping setup
+    # best_100_avg = -float('inf')
+    # episodes_without_improvement = 0
+    # convergence_patience = 500 
 
     global_best_cost_path = float('inf')
 
@@ -52,9 +57,14 @@ def train_master_agent(n, infected_rpus):
     dummy_grid = np.zeros((n, n))
     env = EHWPEnv(n, k_min, dummy_grid)
 
+    # Start the training stopwatch
+    training_start_time = time.time()
+
     for episode in range(1, max_episodes+1):
-        # variable path length k
-        k = random.randint(k_min,k_max)
+        # --- CHANGE MADE HERE: Added step size of 100 ---
+        # variable path length k, stepped by 100
+        k = random.randrange(k_min, k_max + 1, 100)
+        # ------------------------------------------------
 
         # randomized grid generation
         # generate new layout each time to avoid memorization
@@ -105,17 +115,16 @@ def train_master_agent(n, infected_rpus):
         if len(recent_rewards) == 100:
             current_100_avg = np.mean(recent_rewards)
 
-            # check if this is the best avg we have seen
-            if current_100_avg > best_100_avg + 1.0: # require atleast 1.0 point of improvement
-                best_100_avg = current_100_avg
-                episodes_without_improvement = 0
-            else:
-                episodes_without_improvement += 1
+            # Commented out early stopping execution
+            # if current_100_avg > best_100_avg + 1.0: 
+            #     best_100_avg = current_100_avg
+            #     episodes_without_improvement = 0
+            # else:
+            #     episodes_without_improvement += 1
 
-            # if reward flattens for 500 eps, the agent has likely converged
-            if episodes_without_improvement >= convergence_patience:
-                print(f"\nTraining converged at episode {episode}. No improvement in 500 episodes")
-                break
+            # if episodes_without_improvement >= convergence_patience:
+            #     print(f"\nTraining converged at episode {episode}. No improvement in 500 episodes")
+            #     break
 
         # logging metrics
         if episode % 100 == 0:
@@ -127,8 +136,22 @@ def train_master_agent(n, infected_rpus):
             print(f"Episode: {episode:6d}/{max_episodes} | Average Reward (Last 100): {avg_reward:8.1f} | "
             f"Epsilon: {agent.epsilon:.3f} | Best Global Cost: {global_best_cost_path:.1f}")
 
-    # save weights upon completion 
+    # Stop timer and append to log file 
+    training_end_time = time.time()
+    total_training_time = training_end_time - training_start_time
+    hours, rem = divmod(total_training_time, 3600)
+    minutes, seconds = divmod(rem, 60)
+    time_formatted = f"{int(hours)}h {int(minutes)}m {seconds:.2f}s"
+    
     print(f"\nTraining complete. Saving weights to {weight_filename}")
+    print(f"Total Training Time: {time_formatted}")
+    
+    # Save the record to a persistent text file
+    log_file_path = "training_time_log.txt"
+    with open(log_file_path, "a") as log_file:
+        log_file.write(f"Weights: {weight_filename} | Episodes: {max_episodes} | Time: {time_formatted}\n")
+    print(f"Training time successfully logged to {log_file_path}")
+    
     torch.save(agent.online_net.state_dict(), weight_filename)
 
     # Generate and save the training convergence plot and data
@@ -153,4 +176,6 @@ def train_master_agent(n, infected_rpus):
     return agent  
 
 if __name__ == "__main__":
-    trained_agent = train_master_agent(n=16, infected_rpus=10)
+    # --- CHANGE MADE HERE: Updated main execution parameters for 64x64 ---
+    trained_agent = train_master_agent(n=64, infected_rpus=40)
+    # ---------------------------------------------------------------------
